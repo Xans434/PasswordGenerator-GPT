@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QSlider, QCheckBox, QPushButton,
     QLineEdit, QTextEdit, QComboBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 import secrets
 import string
 import sys
@@ -11,44 +12,67 @@ import sys
 
 SYMBOLS = "!@#$%^&*()-_=+[]{};:,.?/\"'\\|"
 
+# ------------------ MULTILANGUAGE ------------------
+LANG = "RU"  # default
 
-def generate_password(length: int,
-                      use_lower: bool,
-                      use_upper: bool,
-                      use_digits: bool,
-                      use_symbols: bool) -> str:
+STR = {
+    "RU": {
+        "title": "Генератор паролей | PySide6",
+        "theme": "Тема:",
+        "light": "Светлая",
+        "dark": "Тёмная",
+        "length": "Длина пароля: {v}",
+        "lower": "Строчные (a-z)",
+        "upper": "Заглавные (A-Z)",
+        "digits": "Цифры (0-9)",
+        "symbols": "Спецсимволы (!@#…)",
+        "gen_one": "Сгенерировать один пароль",
+        "gen_many": "Сгенерировать 10 паролей",
+        "copy": "Копировать пароль",
+        "strength": "Сложность: {s}",
+        "update": "Скачать обновление",
+        "lang": "Язык:" 
+    },
+    "EN": {
+        "title": "Password Generator | PySide6",
+        "theme": "Theme:",
+        "light": "Light",
+        "dark": "Dark",
+        "length": "Password length: {v}",
+        "lower": "Lowercase (a-z)",
+        "upper": "Uppercase (A-Z)",
+        "digits": "Digits (0-9)",
+        "symbols": "Symbols (!@#…) ",
+        "gen_one": "Generate one password",
+        "gen_many": "Generate 10 passwords",
+        "copy": "Copy password",
+        "strength": "Strength: {s}",
+        "update": "Download update",
+        "lang": "Language:" 
+    },
+}
 
+# ----------------------------------------------------
+
+def generate_password(length: int, lo: bool, up: bool, dg: bool, sy: bool) -> str:
     alphabet = ""
-    if use_lower:
-        alphabet += string.ascii_lowercase
-    if use_upper:
-        alphabet += string.ascii_uppercase
-    if use_digits:
-        alphabet += string.digits
-    if use_symbols:
-        alphabet += SYMBOLS
-
-    if not alphabet:
-        return "Ошибка: пустой набор символов"
+    if lo: alphabet += string.ascii_lowercase
+    if up: alphabet += string.ascii_uppercase
+    if dg: alphabet += string.digits
+    if sy: alphabet += SYMBOLS
+    if not alphabet: return "Error: empty charset"
 
     required = []
-    if use_lower:
-        required.append(secrets.choice(string.ascii_lowercase))
-    if use_upper:
-        required.append(secrets.choice(string.ascii_uppercase))
-    if use_digits:
-        required.append(secrets.choice(string.digits))
-    if use_symbols:
-        required.append(secrets.choice(SYMBOLS))
-
-    if len(required) > length:
-        return "Недостаточная длина для выбранных типов"
+    if lo: required.append(secrets.choice(string.ascii_lowercase))
+    if up: required.append(secrets.choice(string.ascii_uppercase))
+    if dg: required.append(secrets.choice(string.digits))
+    if sy: required.append(secrets.choice(SYMBOLS))
+    if len(required) > length: return "Length too small"
 
     remaining = length - len(required)
-    password_chars = required + [secrets.choice(alphabet) for _ in range(remaining)]
-
-    secrets.SystemRandom().shuffle(password_chars)
-    return "".join(password_chars)
+    chars = required + [secrets.choice(alphabet) for _ in range(remaining)]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
 
 
 def rate_strength(pwd: str) -> str:
@@ -59,106 +83,145 @@ def rate_strength(pwd: str) -> str:
     if any(c in SYMBOLS for c in pwd): score += 1
     if len(pwd) >= 14: score += 1
 
-    return ["Очень слабый", "Слабый", "Средний", "Хороший", "Сильный", "Очень сильный"][score]
+    return ["Very Weak", "Weak", "Medium", "Good", "Strong", "Very Strong"][score]
 
 
 class PasswordGeneratorUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Генератор паролей | PySide6")
-        self.setFixedSize(450, 500)
+        self.current_lang = "RU"
+        self.setWindowTitle(STR[self.current_lang]["title"])
+        self.setFixedSize(480, 540)
 
         layout = QVBoxLayout()
 
-        # Выбор темы
+        # ----- Language Selection -----
+        lang_layout = QHBoxLayout()
+        lang_label = QLabel(STR[self.current_lang]["lang"])
+        self.lang_box = QComboBox()
+        self.lang_box.addItems(["Русский", "English"])
+        self.lang_box.currentIndexChanged.connect(self.switch_language)
+        lang_layout.addWidget(lang_label)
+        lang_layout.addWidget(self.lang_box)
+        layout.addLayout(lang_layout)
+
+        # ----- Theme -----
         theme_layout = QHBoxLayout()
-        theme_label = QLabel("Тема:")
+        self.theme_label = QLabel(STR[self.current_lang]["theme"])
         self.theme_box = QComboBox()
-        self.theme_box.addItems(["Светлая", "Темная"])
+        self.theme_box.addItems([STR[self.current_lang]["light"], STR[self.current_lang]["dark"]])
         self.theme_box.currentIndexChanged.connect(self.apply_theme)
-        theme_layout.addWidget(theme_label)
+        theme_layout.addWidget(self.theme_label)
         theme_layout.addWidget(self.theme_box)
         layout.addLayout(theme_layout)
 
-        # Ползунок длины
-        length_label = QLabel("Длина пароля: 16")
-        self.length_label = length_label
-        slider = QSlider(Qt.Horizontal)
-        slider.setMinimum(8)
-        slider.setMaximum(32)
-        slider.setValue(16)
-        slider.valueChanged.connect(lambda v: self.length_label.setText(f"Длина пароля: {v}"))
-        self.length_slider = slider
+        # ----- Length Slider -----
+        self.length_label = QLabel(STR[self.current_lang]["length"].format(v=16))
+        self.length_slider = QSlider(Qt.Horizontal)
+        self.length_slider.setMinimum(8)
+        self.length_slider.setMaximum(32)
+        self.length_slider.setValue(16)
+        self.length_slider.valueChanged.connect(self.update_length_label)
+        layout.addWidget(self.length_label)
+        layout.addWidget(self.length_slider)
 
-        layout.addWidget(length_label)
-        layout.addWidget(slider)
+        # ----- Options -----
+        self.cb_lower = QCheckBox()
+        self.cb_upper = QCheckBox()
+        self.cb_digits = QCheckBox()
+        self.cb_symbols = QCheckBox()
+        for cb in (self.cb_lower, self.cb_upper, self.cb_digits, self.cb_symbols): cb.setChecked(True)
+        layout.addWidget(self.cb_lower)
+        layout.addWidget(self.cb_upper)
+        layout.addWidget(self.cb_digits)
+        layout.addWidget(self.cb_symbols)
 
-        # Чекбоксы
-        self.cb_lower = QCheckBox("Строчные (a-z)")
-        self.cb_upper = QCheckBox("Заглавные (A-Z)")
-        self.cb_digits = QCheckBox("Цифры (0-9)")
-        self.cb_symbols = QCheckBox("Спецсимволы (!@#…)")
-        for cb in (self.cb_lower, self.cb_upper, self.cb_digits, self.cb_symbols):
-            cb.setChecked(True)
-            layout.addWidget(cb)
-
-        # Кнопки
-        btn_layout = QHBoxLayout()
-        self.generate_btn = QPushButton("Сгенерировать один пароль")
-        self.generate_many_btn = QPushButton("Сгенерировать 10 паролей")
+        # ----- Buttons -----
+        btns = QHBoxLayout()
+        self.generate_btn = QPushButton()
+        self.generate_many_btn = QPushButton()
         self.generate_btn.clicked.connect(self.generate_one)
         self.generate_many_btn.clicked.connect(self.generate_many)
-        btn_layout.addWidget(self.generate_btn)
-        btn_layout.addWidget(self.generate_many_btn)
-        layout.addLayout(btn_layout)
+        btns.addWidget(self.generate_btn)
+        btns.addWidget(self.generate_many_btn)
+        layout.addLayout(btns)
 
-        # Поле вывода одного пароля
-        self.output = QLineEdit()
-        self.output.setReadOnly(True)
+        # ----- Output -----
+        self.output = QLineEdit(); self.output.setReadOnly(True)
         layout.addWidget(self.output)
 
-        # Копировать
-        self.copy_btn = QPushButton("Копировать пароль")
-        self.copy_btn.clicked.connect(self.copy_pwd)
+        self.copy_btn = QPushButton(); self.copy_btn.clicked.connect(self.copy_pwd)
         layout.addWidget(self.copy_btn)
 
-        # Индикатор сложности
-        self.strength_label = QLabel("Сложность: –")
+        self.strength_label = QLabel()
         layout.addWidget(self.strength_label)
 
-        # Вывод нескольких паролей
-        self.multi_output = QTextEdit()
-        self.multi_output.setReadOnly(True)
+        # Many passwords output
+        self.multi_output = QTextEdit(); self.multi_output.setReadOnly(True)
         layout.addWidget(self.multi_output)
 
+        # ----- UPDATE BUTTON -----
+        self.update_btn = QPushButton()
+        self.update_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/Xans434/PasswordGenerator-GPT/releases")))
+        layout.addWidget(self.update_btn)
+
         self.setLayout(layout)
+        self.retranslate()
         self.apply_theme()
 
+    # ------------------------ UI UPDATE FUNCTIONS ------------------------
+    def update_length_label(self, v):
+        self.length_label.setText(STR[self.current_lang]["length"].format(v=v))
+
+    def switch_language(self):
+        self.current_lang = "RU" if self.lang_box.currentIndex() == 0 else "EN"
+        self.retranslate()
+
+    def retranslate(self):
+        txt = STR[self.current_lang]
+        self.setWindowTitle(txt["title"])
+        self.theme_label.setText(txt["theme"])
+        self.theme_box.setItemText(0, txt["light"])
+        self.theme_box.setItemText(1, txt["dark"])
+        self.length_label.setText(txt["length"].format(v=self.length_slider.value()))
+
+        self.cb_lower.setText(txt["lower"])
+        self.cb_upper.setText(txt["upper"])
+        self.cb_digits.setText(txt["digits"])
+        self.cb_symbols.setText(txt["symbols"])
+
+        self.generate_btn.setText(txt["gen_one"])
+        self.generate_many_btn.setText(txt["gen_many"])
+        self.copy_btn.setText(txt["copy"])
+        self.update_btn.setText(txt["update"])
+        self.strength_label.setText(txt["strength"].format(s="–"))
+
+    # ------------------------ GENERATION ------------------------
     def get_flags(self):
         return (
             self.length_slider.value(),
             self.cb_lower.isChecked(),
             self.cb_upper.isChecked(),
             self.cb_digits.isChecked(),
-            self.cb_symbols.isChecked()
+            self.cb_symbols.isChecked(),
         )
 
     def generate_one(self):
         length, lo, up, dg, sy = self.get_flags()
         pwd = generate_password(length, lo, up, dg, sy)
         self.output.setText(pwd)
-        self.strength_label.setText(f"Сложность: {rate_strength(pwd)}")
+        self.strength_label.setText(STR[self.current_lang]["strength"].format(s=rate_strength(pwd)))
 
     def generate_many(self):
-        length, lo, up, dg, sy = self.get_flags()
         self.multi_output.clear()
+        length, lo, up, dg, sy = self.get_flags()
         for _ in range(10):
-            pwd = generate_password(length, lo, up, dg, sy)
-            self.multi_output.append(pwd)
+            self.multi_output.append(generate_password(length, lo, up, dg, sy))
 
     def copy_pwd(self):
         QApplication.clipboard().setText(self.output.text())
 
+    # ------------------------ THEMES ------------------------
     def apply_theme(self):
         dark = self.theme_box.currentIndex() == 1
         if dark:
